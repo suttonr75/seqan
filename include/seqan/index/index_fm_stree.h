@@ -553,5 +553,213 @@ parentEdgeFirstChar(Iter<Index<TText, FMIndex<TOccSpec, TIndexSpec > >, VSTree<T
     return value(it).lastChar;
 }
 
+class Node
+{
+public:
+    int sp;
+    int ep;
+    int layer;
+    Node(int s, int e, int lay) : sp(s), ep(e), layer(lay)
+    {}
+    Node() : sp(0), ep(0), layer(0)
+    {}
+};
+
+template < typename TText, typename TSpec2, typename TConfig, class TSpec >
+inline String<int>
+getOccurrences2(Iter< Index< TText, FMIndex<TSpec2, TConfig> >, VSTree<TSpec> > const &it)
+{
+    const auto index = it.index;
+    const auto csa = index->sa;
+    const auto lf = index->lf;
+    const auto bwt = lf.bwt;
+    const auto indicators = getFibre(csa.sparseString, FibreIndicators());
+    const auto values = getFibre(csa.sparseString, FibreValues());
+    const auto sentinels = getFibre(lf, FibreSentinels());
+    const String<Dna> pattern = representative(it);
+    int sp = value(it).range.i1;
+    int ep = value(it).range.i2 - 1;
+    //int sp1 = nodeUp(it).range.i1;
+    //int ep1 = nodeUp(it).range.i2;
+    const int samplingSize = 10;
+    const int treeHeight = samplingSize; 
+    //if(ep1 == -1)
+    //    treeHeight = samplingSize;
+    //else
+    //    treeHeight = samplingSize-1;
+    const int threshold = 10;
+    int num = 0;
+    const int totalNum = ep - sp + 1;
+    int layer = 0;
+    String<int> positions;
+    reserve(positions,totalNum);
+    //int posCount(0);
+    //String<int> spChild;
+    //String<int> epChild;
+    //resize(spChild, 4);
+    //resize(epChild, 4);
+    int spChild[4];
+    int epChild[4];
+    String<Node> holder;
+    Node starter(sp,ep,layer);
+    appendValue(holder, starter);
+    const int indicatorLen = length(indicators);
+    const int sent = getValue(sentinels,0);
+    const Dna sub = lf.sentinelSubstitute;
+    int sentSub;
+    int posLength = 0;
+    const int aSum = lf.sums[0];
+    const int cSum = lf.sums[1];
+    const int gSum = lf.sums[2];
+    const int tSum = lf.sums[3];
+    if(sub == Dna('A'))
+        sentSub = 0;
+    else if(sub == Dna('C'))
+        sentSub = 1;
+    else if(sub == Dna('G'))
+        sentSub = 2;
+    else
+        sentSub = 3;
+    //insert early leaf nodes calculations
+    /*for(int i = sp1; i <= ep1; ++i)
+    {
+        if(getValue(indicators,i) && (getValue(bwt,i) == pattern[0]))
+        {
+            appendValue(positions,getValue(values,getRank(indicators, i)-1)-1);
+            ++num;
+        }
+    }*/
+    while(!empty(holder) && num < totalNum)
+    {
+        Node current = front(holder);
+        erase(holder,0,1);
+        sp = current.sp;
+        ep = current.ep;
+        layer = current.layer;
+        //std::cout << "CURRENT sp: " << sp << " ep: " << ep << " LAYER: " << layer << std::endl;
+        if(ep - sp + 1 < threshold)
+        {
+            int pos = 0;
+            for(int i = sp; i <= ep; ++i)
+            {
+                int counter = 0;
+                pos = i;
+                for (; !getValue(indicators, pos); ++counter)
+                    pos = getFibre(csa, FibreLF())(pos);
+                bool alreadyExists = false;
+                int val = getValue(values, getRank(indicators, pos) - 1) + counter + layer;
+                for(int x = 0; x < posLength; x++)
+                {
+                    if(positions[x] == val)
+                        alreadyExists = true;
+                }
+                if(!alreadyExists)
+                {
+                    appendValue(positions,val);
+                    ++posLength;
+                }
+                else
+                {
+                    --num;
+                }
+                
+            }
+            num += ep - sp + 1;
+        }
+        else
+        {
+            // find ssp, sep using getRank and marked bit vector
+            int ssp;
+            if(sp == 0)
+                ssp = 0;
+            else
+                ssp = getRank(indicators, sp-1);
+            int sep = getRank(indicators, ep);
+            if(sep > ssp)
+            {
+                num += (sep-ssp);
+                for(int k = ssp; k < sep; ++k)
+                {
+                    /*std::cout << "k: " << k << std::endl;
+                    std::cout << "layer: " << layer << std::endl;
+                    std::cout <<  "marked position: " << getValue(values,k)<< std::endl;*/
+                    int val = getValue(values,k) + layer;
+                    if(val < indicatorLen)
+                    {
+                        ++posLength;
+                        appendValue(positions,val);
+                    }
+                    else
+                    {
+                        --num;
+                    }
+                }
+            }
+            if(layer + 1 < treeHeight)
+            {
+                if(sp == 0)
+                {
+                    /*assignValue(spChild,0,aSum);
+                    assignValue(spChild,1,cSum);
+                    assignValue(spChild,2,gSum);
+                    assignValue(spChild,3,tSum);*/
+                    spChild[0] = aSum;
+                    spChild[1] = cSum;
+                    spChild[2] = gSum;
+                    spChild[3] = tSum;
+                }else
+                {
+                    /*assignValue(spChild,0,aSum + getRank(bwt,sp-1, 'A'));
+                    assignValue(spChild,1,cSum + getRank(bwt,sp-1, 'C'));
+                    assignValue(spChild,2,gSum + getRank(bwt,sp-1, 'G'));
+                    assignValue(spChild,3,tSum + getRank(bwt,sp-1, 'T'));*/
+                    spChild[0] = aSum + getRank(bwt,sp-1, 'A');
+                    spChild[1] = cSum + getRank(bwt,sp-1, 'C');
+                    spChild[2] = gSum + getRank(bwt,sp-1, 'G');
+                    spChild[3] = tSum + getRank(bwt,sp-1, 'T');
+                    if(sp - 1 >= sent)
+                        --spChild[sentSub];
+                }
+                /*assignValue(epChild,0,aSum + getRank(bwt,ep, 'A')-1);
+                assignValue(epChild,1,cSum + getRank(bwt,ep, 'C')-1);
+                assignValue(epChild,2,gSum + getRank(bwt,ep, 'G')-1);
+                assignValue(epChild,3,tSum + getRank(bwt,ep, 'T')-1);*/
+                epChild[0] = aSum + getRank(bwt,ep, 'A')-1;
+                epChild[1] = cSum + getRank(bwt,ep, 'C')-1;
+                epChild[2] = gSum + getRank(bwt,ep, 'G')-1;
+                epChild[3] = tSum + getRank(bwt,ep, 'T')-1;
+                if(ep >= sent)
+                    --epChild[sentSub];
+                //std::cout << "NEW NODES" << std::endl;
+                for(int i = 0; i < 4; ++i)
+                {
+                    int s(spChild[i]);
+                    int e(epChild[i]);
+                    if(s <= e)
+                    {
+                        //std::cout<< spChild[i] << ", " << epChild[i] << std::endl;
+                        Node add = Node(s,e,layer+1);
+                        appendValue(holder,add);
+                    }
+                    
+                }
+            }
+            
+
+        }
+
+    }
+    return positions;
+}
+
+/*template < typename TText, typename TSpec2, typename TConfig, class TSpec >
+inline typename Infix< typename Fibre<Index< TText, FMIndex<TSpec2, TConfig> >, FibreSA>::Type const >::Type
+
+    if (_isSizeInval(value(it).range.i2))
+        return infix(indexSA(container(it)), value(it).range.i1, length(indexSA(container(it))));
+    else
+        return infix(indexSA(container(it)), value(it).range.i1, value(it).range.i2);
+*/
+
 }
 #endif  // INDEX_FM_STREE_H_
